@@ -62,10 +62,7 @@ export default function Staff() {
   if (!user) {
     return (
       <div className="page">
-        <LoginForm title="Blood bank staff sign in" />
-        <p className="muted narrow" style={{ textAlign: "center", marginTop: 12 }}>
-          New blood bank? <a href="/register" className="lp-inline-link">Register for verification</a>
-        </p>
+        <LoginForm title="Blood bank staff sign in" registerHref="/register" />
       </div>
     );
   }

@@ -1,5 +1,6 @@
 "use client";
 import { FormEvent, useEffect, useState } from "react";
+import Link from "next/link";
 import { onAuthStateChanged, signInWithEmailAndPassword, signOut as fbSignOut, type User } from "firebase/auth";
 import { doc, getDoc } from "firebase/firestore";
 import { auth, db } from "./firebase";
@@ -35,7 +36,7 @@ export function useProfile() {
   return { loading, user, profile, signOut: () => fbSignOut(auth) };
 }
 
-export function LoginForm({ title }: { title: string }) {
+export function LoginForm({ title, registerHref }: { title: string; registerHref?: string }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
@@ -66,7 +67,10 @@ export function LoginForm({ title }: { title: string }) {
         <input type="password" required autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} />
       </label>
       {error && <p className="error" role="alert">{error}</p>}
-      <button className="btn primary" disabled={busy}>{busy ? "Signing in…" : "Sign in"}</button>
+      <div className="actions">
+        <button className="btn primary" disabled={busy}>{busy ? "Signing in…" : "Sign in"}</button>
+        {registerHref && <Link className="btn" href={registerHref}>Register blood bank</Link>}
+      </div>
     </form>
   );
 }
