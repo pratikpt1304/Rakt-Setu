@@ -9,8 +9,8 @@ rules_version = '2';
 // Collection: profiles
 // Document ID: {uid} (Firebase Auth UID)
 // Fields:
-//   - role: string (required, 'staff' | 'admin') - user role, managed server-side/console only
-//   - bank_id: string or null (required) - linked blood bank ID for staff accounts
+//   - role: string (required, 'staff' | 'admin') - user role ('staff' on self-registration; 'admin' managed server-side/console only)
+//   - bank_id: string or null (required, 1..128 chars when string) - linked blood bank ID for staff accounts
 //
 // Collection: banks
 // Document ID: {bankId}
@@ -21,15 +21,16 @@ rules_version = '2';
 //   - phone: string (required, 1..30 chars) - contact phone number
 //   - lat: number (required, -90..90) - latitude
 //   - lng: number (required, -180..180) - longitude
-//   - approved: bool (required) - whether bank is publicly visible
+//   - approved: bool (required) - whether bank is publicly visible (must be false on self-registration)
 //   - last_published_at: timestamp or null (required) - server timestamp of last stock update
 //   - created_at: timestamp (required, immutable) - creation timestamp
 //   - stock: map (required) - exact 8 keys ('A+','A-','B+','B-','O+','O-','AB+','AB-') mapped to int 0..999
+//   - owner_uid: string (optional, 1..128 chars) - Firebase Auth UID of self-registering owner
 //
 // Collection: audit_log
 // Document ID: {logId}
 // Fields:
-//   - bank_id: string (required, 1..128 chars) - target blood bank ID
+//   - bank_id: string (required, 1..128 chars) - target blood bank ID (must be approved)
 //   - user_id: string (required, 1..128 chars, must equal request.auth.uid) - staff UID
 //   - units: map (required) - exact 8 blood group keys mapped to int 0..999
 //   - created_at: timestamp (required, must equal request.time) - server timestamp
@@ -102,7 +103,7 @@ service cloud.firestore {
 
     function isValidBank(data) {
       return data.keys().hasAll(['name', 'area', 'address', 'phone', 'lat', 'lng', 'approved', 'last_published_at', 'created_at', 'stock']) &&
-             data.keys().hasOnly(['name', 'area', 'address', 'phone', 'lat', 'lng', 'approved', 'last_published_at', 'created_at', 'stock']) &&
+             data.keys().hasOnly(['name', 'area', 'address', 'phone', 'lat', 'lng', 'approved', 'last_published_at', 'created_at', 'stock', 'owner_uid']) &&
              validStringLength(data.name, 2, 120) &&
              validStringLength(data.area, 1, 150) &&
              validOptionalString(data.address, 0, 500) &&
@@ -112,7 +113,8 @@ service cloud.firestore {
              data.approved is bool &&
              (data.last_published_at == null || data.last_published_at is timestamp) &&
              data.created_at is timestamp &&
-             validStock(data.stock);
+             validStock(data.stock) &&
+             (!('owner_uid' in data) || validStringLength(data.owner_uid, 1, 128));
     }
 
     function isValidAuditLog(data) {
@@ -128,20 +130,39 @@ service cloud.firestore {
     // Collection Rules
     // ===============================================================
 
-    // User role & bank assignment profiles (managed server-side/console only)
+    // User role & bank assignment profiles
+    // Users may self-create a 'staff' profile only when linked to an unapproved bank they own
     match /profiles/{uid} {
-      allow read: if isAuthenticated() && (request.auth.uid == uid || isAdmin());
-      allow write: if false;
+      allow read: if request.auth != null && (request.auth.uid == uid || isAdmin());
+      allow create: if request.auth != null &&
+                       request.auth.uid == uid &&
+                       request.resource.data.keys().hasOnly(['role', 'bank_id']) &&
+                       request.resource.data.role == 'staff' &&
+                       validStringLength(request.resource.data.bank_id, 1, 128) &&
+                       exists(/databases/$(database)/documents/banks/$(request.resource.data.bank_id)) &&
+                       get(/databases/$(database)/documents/banks/$(request.resource.data.bank_id)).data.get('owner_uid', '') == request.auth.uid &&
+                       get(/databases/$(database)/documents/banks/$(request.resource.data.bank_id)).data.approved == false;
+      allow update, delete: if false;
     }
 
     // Blood banks and their live stock counts
     match /banks/{bankId} {
-      allow read: if resource.data.approved == true || isAdmin() || isBankStaff(bankId);
-      allow create: if isAdmin() && isValidBank(request.resource.data);
+      allow read: if resource.data.approved == true ||
+                     isAdmin() ||
+                     isBankStaff(bankId) ||
+                     (request.auth != null && resource.data.get('owner_uid', '') == request.auth.uid);
+      allow create: if (isAdmin() && isValidBank(request.resource.data)) ||
+                       (request.auth != null &&
+                        isValidBank(request.resource.data) &&
+                        request.resource.data.approved == false &&
+                        request.resource.data.get('owner_uid', '') == request.auth.uid &&
+                        request.resource.data.created_at == request.time &&
+                        request.resource.data.last_published_at == null);
       allow update: if (isAdmin() &&
                         isValidBank(request.resource.data) &&
                         request.resource.data.created_at == resource.data.created_at) ||
                        (isBankStaff(bankId) &&
+                        resource.data.approved == true &&
                         isValidBank(request.resource.data) &&
                         request.resource.data.diff(resource.data).affectedKeys().hasOnly(['stock', 'last_published_at']) &&
                         request.resource.data.last_published_at == request.time &&
@@ -155,6 +176,8 @@ service cloud.firestore {
       allow create: if isAuthenticated() &&
                        isValidAuditLog(request.resource.data) &&
                        isBankStaff(request.resource.data.bank_id) &&
+                       exists(/databases/$(database)/documents/banks/$(request.resource.data.bank_id)) &&
+                       get(/databases/$(database)/documents/banks/$(request.resource.data.bank_id)).data.approved == true &&
                        request.resource.data.user_id == request.auth.uid &&
                        request.resource.data.created_at == request.time;
       allow update, delete: if false;

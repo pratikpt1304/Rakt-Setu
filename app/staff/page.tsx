@@ -9,6 +9,7 @@ const clamp = (n: number) => Math.max(0, Math.min(999, Math.floor(Number.isFinit
 export default function Staff() {
   const { loading, user, profile, signOut } = useProfile();
   const [bankName, setBankName] = useState("");
+  const [approved, setApproved] = useState<boolean | null>(null);
   const [published, setPublished] = useState<string | null>(null);
   const [units, setUnits] = useState<Record<string, number>>({});
   const [msg, setMsg] = useState("");
@@ -17,8 +18,9 @@ export default function Staff() {
 
   async function loadBank(bankId: string) {
     const snap = await getDoc(doc(db, "banks", bankId));
-    const data = snap.data() as { name?: string; last_published_at?: unknown; stock?: Record<string, number> } | undefined;
+    const data = snap.data() as { name?: string; approved?: boolean; last_published_at?: unknown; stock?: Record<string, number> } | undefined;
     setBankName(data?.name ?? "");
+    setApproved(data ? Boolean(data.approved) : null);
     setPublished(toIso(data?.last_published_at));
     const next: Record<string, number> = {};
     GROUPS.forEach((g) => (next[g] = clamp(data?.stock?.[g] ?? 0)));
@@ -57,12 +59,35 @@ export default function Staff() {
   }
 
   if (loading) return <p className="page muted">Loading…</p>;
-  if (!user) return <div className="page"><LoginForm title="Blood bank staff sign in" /></div>;
+  if (!user) {
+    return (
+      <div className="page">
+        <LoginForm title="Blood bank staff sign in" />
+        <p className="muted narrow" style={{ textAlign: "center", marginTop: 12 }}>
+          New blood bank? <a href="/register" className="lp-inline-link">Register for verification</a>
+        </p>
+      </div>
+    );
+  }
   if (!profile?.bank_id) {
     return (
       <div className="page panel narrow">
         <h1>Account not linked</h1>
         <p>Your login is not linked to a blood bank yet. Ask the RaktSetu administrator to link it.</p>
+        <button className="btn" onClick={signOut}>Sign out</button>
+      </div>
+    );
+  }
+  if (approved === false) {
+    return (
+      <div className="page panel narrow">
+        <div className="bank-head">
+          <h1>{bankName || "Blood bank"}</h1>
+          <span className="badge low">Pending verification</span>
+        </div>
+        <p style={{ marginTop: 12 }}>
+          Your registration is under review. For safety, your blood bank is hidden from the public and stock publishing is disabled until our team verifies your details.
+        </p>
         <button className="btn" onClick={signOut}>Sign out</button>
       </div>
     );

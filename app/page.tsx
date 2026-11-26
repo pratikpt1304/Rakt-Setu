@@ -59,7 +59,8 @@ export default function Landing() {
           </p>
           <div className="actions">
             <Link className="btn primary" href="/staff">Blood bank sign in</Link>
-            {contact && <a className="btn" href={`mailto:${contact}`}>List your blood bank</a>}
+            <Link className="btn" href="/register">Register your blood bank</Link>
+            {contact && <a className="btn" href={`mailto:${contact}`}>Contact us</a>}
           </div>
         </div>
       </section>
