@@ -3,12 +3,6 @@ import ExampleBankCard from "./ExampleBankCard";
 
 const GROUPS = ["A+", "A-", "B+", "B-", "O+", "O-", "AB+", "AB-"];
 
-const FACTS = [
-  { label: "made 4 or more calls to find blood", value: 62, note: "8 of 13" },
-  { label: "waited over an hour to confirm it", value: 54, note: "7 of 13" },
-  { label: "would use a live availability platform", value: 89, note: "16 of 18" }
-];
-
 export default function Landing() {
   const contact = process.env.NEXT_PUBLIC_CONTACT_EMAIL;
 
@@ -34,22 +28,6 @@ export default function Landing() {
         </div>
 
         <ExampleBankCard />
-      </section>
-
-      <section className="lp-sec">
-        <h2>Finding blood should not mean calling every bank</h2>
-        <p className="lp-prose">
-          When a family needs blood urgently, the search usually starts with phone calls, one blood bank after another, while the patient waits. We asked people who had been through it.
-        </p>
-        <ul className="lp-bars" aria-label="Survey results">
-          {FACTS.map((f) => (
-            <li key={f.label}>
-              <span>{f.value}% {f.label} <span className="muted">({f.note})</span></span>
-              <b>{f.value}%</b>
-              <span className="bar" aria-hidden="true"><i style={{ width: `${f.value}%` }} /></span>
-            </li>
-          ))}
-        </ul>
       </section>
 
       <section className="lp-sec">
