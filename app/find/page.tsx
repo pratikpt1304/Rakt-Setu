@@ -1,16 +1,29 @@
 "use client";
-import { useCallback, useEffect, useState } from "react";
-import { supabase, GROUPS, COMPAT, Group, Bank, ago, isStale, level } from "@/lib/supabase";
+import { useEffect, useState } from "react";
+import { collection, onSnapshot, query, where } from "firebase/firestore";
+import { db, GROUPS, COMPAT, Group, Bank, ago, isStale, level, toIso, haversineKm } from "@/lib/firebase";
 import { AREAS } from "@/lib/areas";
 
 type Place = { label: string; lat: number; lng: number };
 
 const stockLabel = (n: number) => (n === 0 ? "Out of stock" : n < 5 ? `Low: ${n} unit${n === 1 ? "" : "s"}` : `${n} units`);
 
+type RawBank = {
+  id: string;
+  name: string;
+  area: string;
+  address?: string | null;
+  phone: string;
+  lat: number;
+  lng: number;
+  last_published_at?: unknown;
+  stock?: Record<string, number> | null;
+};
+
 export default function Home() {
   const [group, setGroup] = useState<Group>("B+");
   const [place, setPlace] = useState<Place>(AREAS[0]);
-  const [banks, setBanks] = useState<Bank[] | null>(null);
+  const [rawBanks, setRawBanks] = useState<RawBank[] | null>(null);
   const [error, setError] = useState("");
   const [onlyStock, setOnlyStock] = useState(false);
   const [locating, setLocating] = useState(false);
@@ -22,33 +35,25 @@ export default function Home() {
     if (g && (GROUPS as readonly string[]).includes(g)) setGroup(g as Group);
   }, []);
 
-  const load = useCallback(async () => {
-    const { data, error } = await supabase.rpc("nearby_banks", { p_lat: place.lat, p_lng: place.lng, p_group: group });
-    if (error) {
-      setError("Could not load blood banks. Check your connection and try again.");
-      return;
-    }
-    setError("");
-    setBanks(data as Bank[]);
-  }, [group, place]);
-
+  // Subscribe to approved banks in Firestore, and keep "updated X min ago" current.
   useEffect(() => {
-    setBanks(null);
-    load();
-  }, [load]);
-
-  // Refresh when any bank publishes new stock, and keep "updated X min ago" current.
-  useEffect(() => {
-    const channel = supabase
-      .channel("banks-live")
-      .on("postgres_changes", { event: "*", schema: "public", table: "banks" }, () => load())
-      .subscribe();
+    const q = query(collection(db, "banks"), where("approved", "==", true));
+    const unsub = onSnapshot(
+      q,
+      (snap) => {
+        setError("");
+        setRawBanks(snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<RawBank, "id">) })));
+      },
+      () => {
+        setError("Could not load blood banks. Check your connection and try again.");
+      }
+    );
     const timer = setInterval(() => tick((n) => n + 1), 60000);
     return () => {
-      supabase.removeChannel(channel);
+      unsub();
       clearInterval(timer);
     };
-  }, [load]);
+  }, []);
 
   function useMyLocation() {
     if (!navigator.geolocation) {
@@ -68,6 +73,27 @@ export default function Home() {
       { timeout: 8000 }
     );
   }
+
+  const banks: Bank[] | null = rawBanks
+    ? rawBanks
+        .map((b) => {
+          const stock = b.stock ?? null;
+          return {
+            id: b.id,
+            name: b.name,
+            area: b.area,
+            address: b.address ?? null,
+            phone: b.phone,
+            lat: b.lat,
+            lng: b.lng,
+            units: stock?.[group] ?? 0,
+            last_published_at: toIso(b.last_published_at),
+            distance_km: haversineKm(place.lat, place.lng, b.lat, b.lng),
+            all_stock: stock
+          };
+        })
+        .sort((a, b) => a.distance_km - b.distance_km)
+    : null;
 
   const shown = (banks ?? []).filter((b) => !onlyStock || b.units > 0);
 

@@ -1,6 +1,7 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
-import { supabase, ago } from "@/lib/supabase";
+import { collection, doc, getDocs, orderBy, query, updateDoc } from "firebase/firestore";
+import { db, ago, toIso } from "@/lib/firebase";
 import { useProfile, LoginForm } from "@/lib/auth";
 
 type Row = { id: string; name: string; area: string; phone: string; approved: boolean; last_published_at: string | null };
@@ -11,12 +12,25 @@ export default function Admin() {
   const [error, setError] = useState("");
 
   const load = useCallback(async () => {
-    const { data, error: err } = await supabase
-      .from("banks")
-      .select("id,name,area,phone,approved,last_published_at")
-      .order("created_at", { ascending: false });
-    if (err) setError("Could not load banks.");
-    else setRows((data ?? []) as Row[]);
+    try {
+      const snap = await getDocs(query(collection(db, "banks"), orderBy("created_at", "desc")));
+      setRows(
+        snap.docs.map((d) => {
+          const data = d.data() as { name: string; area: string; phone: string; approved: boolean; last_published_at?: unknown };
+          return {
+            id: d.id,
+            name: data.name,
+            area: data.area,
+            phone: data.phone,
+            approved: Boolean(data.approved),
+            last_published_at: toIso(data.last_published_at)
+          };
+        })
+      );
+      setError("");
+    } catch {
+      setError("Could not load banks.");
+    }
   }, []);
 
   useEffect(() => {
@@ -25,9 +39,12 @@ export default function Admin() {
 
   async function toggle(r: Row) {
     setError("");
-    const { error: err } = await supabase.from("banks").update({ approved: !r.approved }).eq("id", r.id);
-    if (err) setError("Could not update this bank.");
-    else load();
+    try {
+      await updateDoc(doc(db, "banks", r.id), { approved: !r.approved });
+      load();
+    } catch {
+      setError("Could not update this bank.");
+    }
   }
 
   if (loading) return <p className="page muted">Loading…</p>;
@@ -49,7 +66,7 @@ export default function Admin() {
           <h1>Blood banks</h1>
           <button className="btn" onClick={signOut}>Sign out</button>
         </div>
-        <p className="muted">Only approved banks appear to the public. Add banks and link staff logins in the Supabase SQL editor (see README).</p>
+        <p className="muted">Only approved banks appear to the public. Manage banks and staff profiles in Firebase Firestore.</p>
         {error && <p className="error" role="alert">{error}</p>}
         <ul className="adminlist">
           {rows.map((r) => (

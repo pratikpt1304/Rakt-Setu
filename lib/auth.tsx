@@ -1,7 +1,8 @@
 "use client";
 import { FormEvent, useEffect, useState } from "react";
-import type { User } from "@supabase/supabase-js";
-import { supabase } from "./supabase";
+import { onAuthStateChanged, signInWithEmailAndPassword, signOut as fbSignOut, type User } from "firebase/auth";
+import { doc, getDoc } from "firebase/firestore";
+import { auth, db } from "./firebase";
 
 export type Profile = { role: "staff" | "admin"; bank_id: string | null };
 
@@ -11,35 +12,27 @@ export function useProfile() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data }) => {
-      setUser(data.session?.user ?? null);
-      if (!data.session) setLoading(false);
-    });
-    const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
-      setUser(session?.user ?? null);
-      if (!session) {
+    const unsub = onAuthStateChanged(auth, async (u) => {
+      setUser(u);
+      if (!u) {
         setProfile(null);
+        setLoading(false);
+        return;
+      }
+      setLoading(true);
+      try {
+        const snap = await getDoc(doc(db, "profiles", u.uid));
+        setProfile(snap.exists() ? (snap.data() as Profile) : null);
+      } catch {
+        setProfile(null);
+      } finally {
         setLoading(false);
       }
     });
-    return () => sub.subscription.unsubscribe();
+    return () => unsub();
   }, []);
 
-  useEffect(() => {
-    if (!user) return;
-    setLoading(true);
-    supabase
-      .from("profiles")
-      .select("role,bank_id")
-      .eq("user_id", user.id)
-      .maybeSingle()
-      .then(({ data }) => {
-        setProfile((data as Profile | null) ?? null);
-        setLoading(false);
-      });
-  }, [user]);
-
-  return { loading, user, profile, signOut: () => supabase.auth.signOut() };
+  return { loading, user, profile, signOut: () => fbSignOut(auth) };
 }
 
 export function LoginForm({ title }: { title: string }) {
@@ -52,9 +45,13 @@ export function LoginForm({ title }: { title: string }) {
     e.preventDefault();
     setBusy(true);
     setError("");
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
-    if (error) setError("Email or password is incorrect.");
-    setBusy(false);
+    try {
+      await signInWithEmailAndPassword(auth, email.trim(), password);
+    } catch {
+      setError("Email or password is incorrect.");
+    } finally {
+      setBusy(false);
+    }
   }
 
   return (

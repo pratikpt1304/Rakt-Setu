@@ -1,0 +1,168 @@
+rules_version = '2';
+
+// ===============================================================
+// Assumed Data Model
+// ===============================================================
+//
+// This security rules file assumes the following data structures:
+//
+// Collection: profiles
+// Document ID: {uid} (Firebase Auth UID)
+// Fields:
+//   - role: string (required, 'staff' | 'admin') - user role, managed server-side/console only
+//   - bank_id: string or null (required) - linked blood bank ID for staff accounts
+//
+// Collection: banks
+// Document ID: {bankId}
+// Fields:
+//   - name: string (required, 2..120 chars) - blood bank name
+//   - area: string (required, 1..150 chars) - locality/area name
+//   - address: string or null (required, 0..500 chars if string) - street address
+//   - phone: string (required, 1..30 chars) - contact phone number
+//   - lat: number (required, -90..90) - latitude
+//   - lng: number (required, -180..180) - longitude
+//   - approved: bool (required) - whether bank is publicly visible
+//   - last_published_at: timestamp or null (required) - server timestamp of last stock update
+//   - created_at: timestamp (required, immutable) - creation timestamp
+//   - stock: map (required) - exact 8 keys ('A+','A-','B+','B-','O+','O-','AB+','AB-') mapped to int 0..999
+//
+// Collection: audit_log
+// Document ID: {logId}
+// Fields:
+//   - bank_id: string (required, 1..128 chars) - target blood bank ID
+//   - user_id: string (required, 1..128 chars, must equal request.auth.uid) - staff UID
+//   - units: map (required) - exact 8 blood group keys mapped to int 0..999
+//   - created_at: timestamp (required, must equal request.time) - server timestamp
+//
+// ===============================================================
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+
+    // Check if the user is authenticated
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    // Check if the authenticated user has an admin profile
+    function isAdmin() {
+      return isAuthenticated() &&
+             exists(/databases/$(database)/documents/profiles/$(request.auth.uid)) &&
+             get(/databases/$(database)/documents/profiles/$(request.auth.uid)).data.role == 'admin';
+    }
+
+    // Check if the authenticated user is staff assigned to the specified bankId
+    function isBankStaff(bankId) {
+      return isAuthenticated() &&
+             bankId is string &&
+             bankId.size() > 0 &&
+             exists(/databases/$(database)/documents/profiles/$(request.auth.uid)) &&
+             get(/databases/$(database)/documents/profiles/$(request.auth.uid)).data.bank_id == bankId;
+    }
+
+    // Validate string length bounds
+    function validStringLength(val, minLen, maxLen) {
+      return val is string &&
+             val.size() >= minLen &&
+             val.size() <= maxLen;
+    }
+
+    // Validate nullable string length bounds
+    function validOptionalString(val, minLen, maxLen) {
+      return val == null || validStringLength(val, minLen, maxLen);
+    }
+
+    // Validate a single blood stock unit count (int 0..999)
+    function validStockUnit(val) {
+      return val is int && val >= 0 && val <= 999;
+    }
+
+    // Validate the 8-group blood stock map
+    function validStock(s) {
+      return s is map &&
+             s.keys().hasAll(['A+', 'A-', 'B+', 'B-', 'O+', 'O-', 'AB+', 'AB-']) &&
+             s.keys().hasOnly(['A+', 'A-', 'B+', 'B-', 'O+', 'O-', 'AB+', 'AB-']) &&
+             validStockUnit(s['A+']) &&
+             validStockUnit(s['A-']) &&
+             validStockUnit(s['B+']) &&
+             validStockUnit(s['B-']) &&
+             validStockUnit(s['O+']) &&
+             validStockUnit(s['O-']) &&
+             validStockUnit(s['AB+']) &&
+             validStockUnit(s['AB-']);
+    }
+
+    // ===============================================================
+    // Domain Validators
+    // ===============================================================
+
+    function isValidBank(data) {
+      return data.keys().hasAll(['name', 'area', 'address', 'phone', 'lat', 'lng', 'approved', 'last_published_at', 'created_at', 'stock']) &&
+             data.keys().hasOnly(['name', 'area', 'address', 'phone', 'lat', 'lng', 'approved', 'last_published_at', 'created_at', 'stock']) &&
+             validStringLength(data.name, 2, 120) &&
+             validStringLength(data.area, 1, 150) &&
+             validOptionalString(data.address, 0, 500) &&
+             validStringLength(data.phone, 1, 30) &&
+             data.lat is number && data.lat >= -90 && data.lat <= 90 &&
+             data.lng is number && data.lng >= -180 && data.lng <= 180 &&
+             data.approved is bool &&
+             (data.last_published_at == null || data.last_published_at is timestamp) &&
+             data.created_at is timestamp &&
+             validStock(data.stock);
+    }
+
+    function isValidAuditLog(data) {
+      return data.keys().hasAll(['bank_id', 'user_id', 'units', 'created_at']) &&
+             data.keys().hasOnly(['bank_id', 'user_id', 'units', 'created_at']) &&
+             validStringLength(data.bank_id, 1, 128) &&
+             validStringLength(data.user_id, 1, 128) &&
+             data.created_at is timestamp &&
+             validStock(data.units);
+    }
+
+    // ===============================================================
+    // Collection Rules
+    // ===============================================================
+
+    // User role & bank assignment profiles (managed server-side/console only)
+    match /profiles/{uid} {
+      allow read: if isAuthenticated() && (request.auth.uid == uid || isAdmin());
+      allow write: if false;
+    }
+
+    // Blood banks and their live stock counts
+    match /banks/{bankId} {
+      allow read: if resource.data.approved == true || isAdmin() || isBankStaff(bankId);
+      allow create: if isAdmin() && isValidBank(request.resource.data);
+      allow update: if (isAdmin() &&
+                        isValidBank(request.resource.data) &&
+                        request.resource.data.created_at == resource.data.created_at) ||
+                       (isBankStaff(bankId) &&
+                        isValidBank(request.resource.data) &&
+                        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['stock', 'last_published_at']) &&
+                        request.resource.data.last_published_at == request.time &&
+                        validStock(request.resource.data.stock));
+      allow delete: if isAdmin();
+    }
+
+    // Immutable stock publish audit trail
+    match /audit_log/{logId} {
+      allow read: if isAdmin();
+      allow create: if isAuthenticated() &&
+                       isValidAuditLog(request.resource.data) &&
+                       isBankStaff(request.resource.data.bank_id) &&
+                       request.resource.data.user_id == request.auth.uid &&
+                       request.resource.data.created_at == request.time;
+      allow update, delete: if false;
+    }
+
+    // Deny all other paths by default
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

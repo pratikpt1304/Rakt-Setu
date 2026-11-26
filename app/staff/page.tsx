@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
-import { supabase, GROUPS, ago } from "@/lib/supabase";
+import { addDoc, collection, doc, getDoc, serverTimestamp, updateDoc } from "firebase/firestore";
+import { db, GROUPS, ago, toIso } from "@/lib/firebase";
 import { useProfile, LoginForm } from "@/lib/auth";
 
 const clamp = (n: number) => Math.max(0, Math.min(999, Math.floor(Number.isFinite(n) ? n : 0)));
@@ -15,15 +16,12 @@ export default function Staff() {
   const [busy, setBusy] = useState(false);
 
   async function loadBank(bankId: string) {
-    const [{ data: b }, { data: s }] = await Promise.all([
-      supabase.from("banks").select("name,last_published_at").eq("id", bankId).single(),
-      supabase.from("stock").select("grp,units").eq("bank_id", bankId)
-    ]);
-    setBankName(b?.name ?? "");
-    setPublished(b?.last_published_at ?? null);
+    const snap = await getDoc(doc(db, "banks", bankId));
+    const data = snap.data() as { name?: string; last_published_at?: unknown; stock?: Record<string, number> } | undefined;
+    setBankName(data?.name ?? "");
+    setPublished(toIso(data?.last_published_at));
     const next: Record<string, number> = {};
-    GROUPS.forEach((g) => (next[g] = 0));
-    (s ?? []).forEach((r: { grp: string; units: number }) => (next[r.grp] = r.units));
+    GROUPS.forEach((g) => (next[g] = clamp(data?.stock?.[g] ?? 0)));
     setUnits(next);
   }
 
@@ -32,17 +30,30 @@ export default function Staff() {
   }, [profile?.bank_id]);
 
   async function publish() {
-    if (!profile?.bank_id) return;
+    if (!profile?.bank_id || !user) return;
     setBusy(true);
     setMsg("");
     setError("");
-    const { error: err } = await supabase.rpc("publish_stock", { p_units: units });
-    if (err) setError("Could not publish. Check your connection and try again.");
-    else {
+    const clean: Record<string, number> = {};
+    GROUPS.forEach((g) => (clean[g] = clamp(units[g] ?? 0)));
+    try {
+      await updateDoc(doc(db, "banks", profile.bank_id), {
+        stock: clean,
+        last_published_at: serverTimestamp()
+      });
+      await addDoc(collection(db, "audit_log"), {
+        bank_id: profile.bank_id,
+        user_id: user.uid,
+        units: clean,
+        created_at: serverTimestamp()
+      });
       setMsg("Published. Families can see the new stock now.");
       await loadBank(profile.bank_id);
+    } catch {
+      setError("Could not publish. Check your connection and try again.");
+    } finally {
+      setBusy(false);
     }
-    setBusy(false);
   }
 
   if (loading) return <p className="page muted">Loading…</p>;
