@@ -4,30 +4,20 @@ import Link from "next/link";
 import { createUserWithEmailAndPassword } from "firebase/auth";
 import { collection, doc, serverTimestamp, setDoc } from "firebase/firestore";
 import { auth, db, GROUPS } from "@/lib/firebase";
-import { AREAS } from "@/lib/areas";
 
 export default function RegisterBank() {
   const [name, setName] = useState("");
-  const [area, setArea] = useState(AREAS[0].label);
+  const [area, setArea] = useState("");
   const [address, setAddress] = useState("");
   const [phone, setPhone] = useState("");
-  const [lat, setLat] = useState(String(AREAS[0].lat));
-  const [lng, setLng] = useState(String(AREAS[0].lng));
+  const [lat, setLat] = useState("");
+  const [lng, setLng] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [locating, setLocating] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [done, setDone] = useState(false);
-
-  function pickArea(label: string) {
-    setArea(label);
-    const found = AREAS.find((a) => a.label === label);
-    if (found) {
-      setLat(String(found.lat));
-      setLng(String(found.lng));
-    }
-  }
 
   function useCurrentLocation() {
     if (!navigator.geolocation) {
@@ -138,11 +128,7 @@ export default function RegisterBank() {
 
         <label>
           Area / Town
-          <select value={AREAS.some((a) => a.label === area) ? area : ""} onChange={(e) => pickArea(e.target.value)}>
-            {AREAS.map((a) => (
-              <option key={a.label} value={a.label}>{a.label}</option>
-            ))}
-          </select>
+          <input type="text" required value={area} onChange={(e) => setArea(e.target.value)} placeholder="e.g. Kopargaon, Nashik, Pune" />
         </label>
 
         <label>
@@ -158,11 +144,11 @@ export default function RegisterBank() {
         <div className="where" style={{ marginBottom: 12 }}>
           <label>
             Latitude
-            <input type="text" inputMode="decimal" required value={lat} onChange={(e) => setLat(e.target.value)} />
+            <input type="text" inputMode="decimal" required value={lat} onChange={(e) => setLat(e.target.value)} placeholder="e.g. 19.8826" />
           </label>
           <label>
             Longitude
-            <input type="text" inputMode="decimal" required value={lng} onChange={(e) => setLng(e.target.value)} />
+            <input type="text" inputMode="decimal" required value={lng} onChange={(e) => setLng(e.target.value)} placeholder="e.g. 74.4813" />
           </label>
           <button type="button" className="btn" onClick={useCurrentLocation} disabled={locating}>
             {locating ? "Locating…" : "Use bank location"}
