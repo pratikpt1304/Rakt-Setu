@@ -9,6 +9,7 @@ type Row = { id: string; name: string; area: string; address: string | null; pho
 export default function Admin() {
   const { loading, user, profile, signOut } = useProfile();
   const [rows, setRows] = useState<Row[]>([]);
+  const [msg, setMsg] = useState("");
   const [error, setError] = useState("");
 
   const load = useCallback(async () => {
@@ -41,8 +42,11 @@ export default function Admin() {
 
   async function toggle(r: Row) {
     setError("");
+    setMsg("");
     try {
-      await updateDoc(doc(db, "banks", r.id), { approved: !r.approved });
+      const next = !r.approved;
+      await updateDoc(doc(db, "banks", r.id), { approved: next });
+      setMsg(`${r.name} is now ${next ? "approved and live on Find blood" : "hidden from the public"}.`);
       load();
     } catch {
       setError("Could not update this bank.");
@@ -70,6 +74,7 @@ export default function Admin() {
         </div>
         <p className="muted">Only approved banks appear to the public. Verify new registrations before approving.</p>
         {error && <p className="error" role="alert">{error}</p>}
+        {msg && <p className="ok-msg" role="status">{msg}</p>}
         <ul className="adminlist">
           {rows.map((r) => (
             <li key={r.id}>
@@ -79,7 +84,8 @@ export default function Admin() {
                   {r.approved ? "Approved" : "Pending verification"}
                 </span>
                 <p className="muted">
-                  {r.area}{r.address ? ` · ${r.address}` : ""} · {r.phone}. Last published {ago(r.last_published_at)}
+                  {r.area}{r.address ? ` · ${r.address}` : ""} ·{" "}
+                  <a href={`tel:${r.phone}`}>{r.phone}</a>. Last published {ago(r.last_published_at)}
                 </p>
               </div>
               <button className={r.approved ? "btn" : "btn primary"} onClick={() => toggle(r)}>

@@ -67,6 +67,18 @@ export default function Staff() {
     );
   }
   if (!profile?.bank_id) {
+    if (profile?.role === "admin") {
+      return (
+        <div className="page panel narrow">
+          <h1>Signed in as Administrator</h1>
+          <p>You are signed in with an admin account. Open the Admin portal to approve banks, or sign out to sign in as blood bank staff.</p>
+          <div className="actions">
+            <a className="btn primary" href="/admin">Go to Admin portal</a>
+            <button className="btn" onClick={signOut}>Sign out</button>
+          </div>
+        </div>
+      );
+    }
     return (
       <div className="page panel narrow">
         <h1>Account not linked</h1>
