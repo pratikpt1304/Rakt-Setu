@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import { collection, onSnapshot, query, where } from "firebase/firestore";
 import { db, GROUPS, COMPAT, Group, Bank, ago, isStale, level, toIso, haversineKm } from "@/lib/firebase";
 import { AREAS } from "@/lib/areas";
@@ -23,10 +23,13 @@ type RawBank = {
 export default function Home() {
   const [group, setGroup] = useState<Group>("B+");
   const [place, setPlace] = useState<Place>(AREAS[0]);
+  const [areaInput, setAreaInput] = useState(AREAS[0].label);
   const [rawBanks, setRawBanks] = useState<RawBank[] | null>(null);
   const [error, setError] = useState("");
+  const [locMsg, setLocMsg] = useState("");
   const [onlyStock, setOnlyStock] = useState(false);
   const [locating, setLocating] = useState(false);
+  const [searching, setSearching] = useState(false);
   const [, tick] = useState(0);
 
   // Landing page links arrive as /find?g=B%2B. Preselect that group.
@@ -55,22 +58,101 @@ export default function Home() {
     };
   }, []);
 
+  async function searchLocation(e: FormEvent) {
+    e.preventDefault();
+    const q = areaInput.trim();
+    if (!q) return;
+    setError("");
+    setLocMsg("");
+
+    const preset = AREAS.find((a) => a.label.toLowerCase() === q.toLowerCase());
+    if (preset) {
+      setPlace(preset);
+      setAreaInput(preset.label);
+      setLocMsg(`Sorted nearest to ${preset.label}.`);
+      return;
+    }
+
+    // Match any bank's area/address directly if user typed a known bank area
+    const bankMatch = rawBanks?.find((b) => b.area.toLowerCase().includes(q.toLowerCase()));
+
+    setSearching(true);
+    try {
+      const res = await fetch(
+        `https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=in&q=${encodeURIComponent(q)}`,
+        { headers: { Accept: "application/json" } }
+      );
+      if (res.ok) {
+        const list = (await res.json()) as Array<{ lat: string; lon: string; display_name?: string }>;
+        if (list.length > 0) {
+          const lat = Number(list[0].lat);
+          const lng = Number(list[0].lon);
+          if (Number.isFinite(lat) && Number.isFinite(lng)) {
+            const label = list[0].display_name?.split(",")[0]?.trim() || q;
+            setPlace({ label, lat, lng });
+            setAreaInput(label);
+            setLocMsg(`Sorted nearest to ${label}.`);
+            setSearching(false);
+            return;
+          }
+        }
+      }
+    } catch {
+      // Fall back to bank area match below if offline
+    }
+    setSearching(false);
+
+    if (bankMatch) {
+      setPlace({ label: bankMatch.area, lat: bankMatch.lat, lng: bankMatch.lng });
+      setAreaInput(bankMatch.area);
+      setLocMsg(`Sorted nearest to ${bankMatch.area}.`);
+    } else {
+      setError(`Could not find "${q}". Try another town name or tap Use my location.`);
+    }
+  }
+
   function useMyLocation() {
     if (!navigator.geolocation) {
-      setError("This device cannot share its location. Pick your area instead.");
+      setError("This device cannot share its location. Type your town or area instead.");
       return;
     }
     setLocating(true);
+    setError("");
+    setLocMsg("");
     navigator.geolocation.getCurrentPosition(
-      (p) => {
-        setPlace({ label: "Your location", lat: p.coords.latitude, lng: p.coords.longitude });
+      async (p) => {
+        const lat = p.coords.latitude;
+        const lng = p.coords.longitude;
+        let label = `Your location (${lat.toFixed(3)}, ${lng.toFixed(3)})`;
+        try {
+          const res = await fetch(
+            `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}`,
+            { headers: { Accept: "application/json" } }
+          );
+          if (res.ok) {
+            const data = (await res.json()) as { address?: { city?: string; town?: string; village?: string; county?: string } };
+            const town = data.address?.town || data.address?.city || data.address?.village || data.address?.county;
+            if (town) label = `${town} (GPS)`;
+          }
+        } catch {
+          // Keep coordinate label if reverse geocode fails
+        }
+        setPlace({ label, lat, lng });
+        setAreaInput(label);
+        setLocMsg(`Using your current location: ${label}.`);
         setLocating(false);
       },
-      () => {
-        setError("Location access was blocked. Pick your area instead.");
+      (err) => {
+        if (err.code === err.PERMISSION_DENIED) {
+          setError("Location permission was blocked in your browser. Allow location access or type your town.");
+        } else if (err.code === err.TIMEOUT) {
+          setError("Location request timed out. Try again or type your town.");
+        } else {
+          setError("Could not detect your location. Type your town or area instead.");
+        }
         setLocating(false);
       },
-      { timeout: 8000 }
+      { enableHighAccuracy: false, timeout: 10000, maximumAge: 60000 }
     );
   }
 
@@ -110,22 +192,30 @@ export default function Home() {
         </div>
         <p className="muted">{group}: {COMPAT[group]} (confirm with a doctor).</p>
 
-        <div className="where">
+        <form className="where" onSubmit={searchLocation}>
           <label>
-            Where are you?
-            <select
-              value={place.label}
-              onChange={(e) => {
-                const a = AREAS.find((x) => x.label === e.target.value);
-                if (a) setPlace(a);
-              }}
-            >
-              {place.label === "Your location" && <option>Your location</option>}
-              {AREAS.map((a) => <option key={a.label}>{a.label}</option>)}
-            </select>
+            Where are you? (type town or area)
+            <input
+              type="text"
+              list="area-suggestions"
+              value={areaInput}
+              onChange={(e) => setAreaInput(e.target.value)}
+              placeholder="e.g. Kopargaon, Shirdi, Nashik"
+            />
+            <datalist id="area-suggestions">
+              {AREAS.map((a) => (
+                <option key={a.label} value={a.label} />
+              ))}
+            </datalist>
           </label>
-          <button className="btn" onClick={useMyLocation} disabled={locating}>{locating ? "Locating…" : "Use my location"}</button>
-        </div>
+          <button type="submit" className="btn primary" disabled={searching}>
+            {searching ? "Searching…" : "Set location"}
+          </button>
+          <button type="button" className="btn" onClick={useMyLocation} disabled={locating}>
+            {locating ? "Locating…" : "Use my location"}
+          </button>
+        </form>
+        {locMsg && <p className="muted" role="status" style={{ marginTop: 8, marginBottom: 0 }}>{locMsg}</p>}
         <label className="check">
           <input type="checkbox" checked={onlyStock} onChange={(e) => setOnlyStock(e.target.checked)} />
           Show only banks with {group} in stock
