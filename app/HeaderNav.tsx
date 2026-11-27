@@ -27,6 +27,7 @@ export default function HeaderNav() {
         </div>
       </div>
       <nav id="main-nav" className={open ? "nav-links open" : "nav-links"} aria-label="Main navigation">
+        <Link href="/" onClick={() => setOpen(false)}>Home</Link>
         <Link href="/find" onClick={() => setOpen(false)}>Find blood</Link>
         <Link href="/staff" onClick={() => setOpen(false)}>For blood banks</Link>
         <Link href="/register" onClick={() => setOpen(false)}>Register bank</Link>

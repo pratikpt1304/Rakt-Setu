@@ -29,6 +29,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             and confirm blood group compatibility with a doctor.
           </p>
           <nav className="foot-links" aria-label="Footer navigation">
+            <Link href="/">Home</Link>
             <Link href="/find">Find blood</Link>
             <Link href="/staff">For blood banks</Link>
             <Link href="/register">Register bank</Link>
