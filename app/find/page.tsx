@@ -28,6 +28,7 @@ export default function Home() {
   const [error, setError] = useState("");
   const [locMsg, setLocMsg] = useState("");
   const [onlyStock, setOnlyStock] = useState(false);
+  const [maxKm, setMaxKm] = useState<number>(25);
   const [locating, setLocating] = useState(false);
   const [searching, setSearching] = useState(false);
   const [, tick] = useState(0);
@@ -88,10 +89,8 @@ export default function Home() {
           const lat = Number(list[0].lat);
           const lng = Number(list[0].lon);
           if (Number.isFinite(lat) && Number.isFinite(lng)) {
-            const label = list[0].display_name?.split(",")[0]?.trim() || q;
-            setPlace({ label, lat, lng });
-            setAreaInput(label);
-            setLocMsg(`Sorted nearest to ${label}.`);
+            setPlace({ label: q, lat, lng });
+            setLocMsg(`Showing blood banks within ${maxKm === 0 ? "all distances of" : `${maxKm} km of`} ${q}.`);
             setSearching(false);
             return;
           }
@@ -120,27 +119,27 @@ export default function Home() {
     setError("");
     setLocMsg("");
     navigator.geolocation.getCurrentPosition(
-      async (p) => {
+      (p) => {
         const lat = p.coords.latitude;
         const lng = p.coords.longitude;
-        let label = `Your location (${lat.toFixed(3)}, ${lng.toFixed(3)})`;
-        try {
-          const res = await fetch(
-            `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}`,
-            { headers: { Accept: "application/json" } }
-          );
-          if (res.ok) {
-            const data = (await res.json()) as { address?: { city?: string; town?: string; village?: string; county?: string } };
-            const town = data.address?.town || data.address?.city || data.address?.village || data.address?.county;
-            if (town) label = `${town} (GPS)`;
-          }
-        } catch {
-          // Keep coordinate label if reverse geocode fails
-        }
-        setPlace({ label, lat, lng });
-        setAreaInput(label);
-        setLocMsg(`Using your current location: ${label}.`);
+        setPlace({ label: "Your location", lat, lng });
+        setAreaInput("Your location");
+        setLocMsg("Showing blood banks nearest to your current location.");
         setLocating(false);
+
+        fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}`, {
+          headers: { Accept: "application/json" }
+        })
+          .then((res) => (res.ok ? res.json() : null))
+          .then((data: { address?: { city?: string; town?: string; state_district?: string } } | null) => {
+            const town = data?.address?.city || data?.address?.town || data?.address?.state_district;
+            if (town) {
+              setPlace({ label: town, lat, lng });
+              setAreaInput(town);
+              setLocMsg(`Showing blood banks near ${town} (GPS).`);
+            }
+          })
+          .catch(() => {});
       },
       (err) => {
         if (err.code === err.PERMISSION_DENIED) {
@@ -177,7 +176,8 @@ export default function Home() {
         .sort((a, b) => a.distance_km - b.distance_km)
     : null;
 
-  const shown = (banks ?? []).filter((b) => !onlyStock || b.units > 0);
+  const nearby = (banks ?? []).filter((b) => maxKm === 0 || b.distance_km <= maxKm);
+  const shown = nearby.filter((b) => !onlyStock || b.units > 0);
 
   return (
     <div className="page">
@@ -216,20 +216,44 @@ export default function Home() {
           </button>
         </form>
         {locMsg && <p className="muted" role="status" style={{ marginTop: 8, marginBottom: 0 }}>{locMsg}</p>}
-        <label className="check">
-          <input type="checkbox" checked={onlyStock} onChange={(e) => setOnlyStock(e.target.checked)} />
-          Show only banks with {group} in stock
-        </label>
+        <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center", marginTop: 10 }}>
+          <label className="check" style={{ margin: 0 }}>
+            <input type="checkbox" checked={onlyStock} onChange={(e) => setOnlyStock(e.target.checked)} />
+            Show only banks with {group} in stock
+          </label>
+          <label style={{ display: "inline-flex", alignItems: "center", gap: 6, margin: 0, fontWeight: 400 }}>
+            Distance:
+            <select
+              value={maxKm}
+              onChange={(e) => setMaxKm(Number(e.target.value))}
+              style={{ width: "auto", marginTop: 0, padding: "6px 10px" }}
+            >
+              <option value={10}>Within 10 km</option>
+              <option value={25}>Within 25 km</option>
+              <option value={50}>Within 50 km</option>
+              <option value={0}>All distances</option>
+            </select>
+          </label>
+        </div>
       </section>
 
       {error && <p className="error" role="alert">{error}</p>}
       {!banks && !error && <p className="muted">Finding blood banks near {place.label}…</p>}
       {banks && shown.length === 0 && (
-        <p className="empty">
-          {banks.length === 0
-            ? "No blood banks are listed yet for this area."
-            : `No nearby bank shows ${group} in stock. Turn off the filter to see all banks and call them.`}
-        </p>
+        <div className="empty">
+          <p style={{ marginBottom: maxKm > 0 && banks.length > 0 ? 10 : 0 }}>
+            {banks.length === 0
+              ? "No blood banks are listed yet."
+              : nearby.length === 0
+                ? `No blood banks found within ${maxKm} km of ${place.label}.`
+                : `No bank within ${maxKm} km shows ${group} in stock. Turn off the filter or increase distance.`}
+          </p>
+          {maxKm > 0 && nearby.length === 0 && banks.length > 0 && (
+            <button type="button" className="btn" onClick={() => setMaxKm(0)}>
+              Show all banks ({banks.length})
+            </button>
+          )}
+        </div>
       )}
 
       <ul className="banks">
