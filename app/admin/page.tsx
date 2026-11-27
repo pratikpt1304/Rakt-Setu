@@ -1,6 +1,6 @@
 "use client";
-import { useCallback, useEffect, useState } from "react";
-import { collection, doc, getDocs, orderBy, query, updateDoc } from "firebase/firestore";
+import { useEffect, useState } from "react";
+import { collection, doc, onSnapshot, orderBy, query, updateDoc } from "firebase/firestore";
 import { db, ago, toIso } from "@/lib/firebase";
 import { useProfile, LoginForm } from "@/lib/auth";
 
@@ -12,33 +12,34 @@ export default function Admin() {
   const [msg, setMsg] = useState("");
   const [error, setError] = useState("");
 
-  const load = useCallback(async () => {
-    try {
-      const snap = await getDocs(query(collection(db, "banks"), orderBy("created_at", "desc")));
-      const mapped = snap.docs.map((d) => {
-        const data = d.data() as { name: string; area: string; address?: string | null; phone: string; approved: boolean; last_published_at?: unknown };
-        return {
-          id: d.id,
-          name: data.name,
-          area: data.area,
-          address: data.address ?? null,
-          phone: data.phone,
-          approved: Boolean(data.approved),
-          last_published_at: toIso(data.last_published_at)
-        };
-      });
-      // Show unverified banks first so team can review them immediately.
-      mapped.sort((a, b) => Number(a.approved) - Number(b.approved));
-      setRows(mapped);
-      setError("");
-    } catch {
-      setError("Could not load banks.");
-    }
-  }, []);
-
   useEffect(() => {
-    if (profile?.role === "admin") load();
-  }, [profile?.role, load]);
+    if (profile?.role !== "admin") return;
+    const q = query(collection(db, "banks"), orderBy("created_at", "desc"));
+    const unsub = onSnapshot(
+      q,
+      (snap) => {
+        const mapped = snap.docs.map((d) => {
+          const data = d.data() as { name: string; area: string; address?: string | null; phone: string; approved: boolean; last_published_at?: unknown };
+          return {
+            id: d.id,
+            name: data.name,
+            area: data.area,
+            address: data.address ?? null,
+            phone: data.phone,
+            approved: Boolean(data.approved),
+            last_published_at: toIso(data.last_published_at)
+          };
+        });
+        mapped.sort((a, b) => Number(a.approved) - Number(b.approved));
+        setRows(mapped);
+        setError("");
+      },
+      () => {
+        setError("Could not load banks.");
+      }
+    );
+    return () => unsub();
+  }, [profile?.role]);
 
   async function toggle(r: Row) {
     setError("");
@@ -47,7 +48,6 @@ export default function Admin() {
       const next = !r.approved;
       await updateDoc(doc(db, "banks", r.id), { approved: next });
       setMsg(`${r.name} is now ${next ? "approved and live on Find blood" : "hidden from the public"}.`);
-      load();
     } catch {
       setError("Could not update this bank.");
     }
@@ -59,6 +59,7 @@ export default function Admin() {
     return (
       <div className="page panel narrow">
         <h1>Administrators only</h1>
+        <p className="muted">Signed in as {user.email}</p>
         <p>This account does not have administrator access.</p>
         <button className="btn" onClick={signOut}>Sign out</button>
       </div>
@@ -69,7 +70,10 @@ export default function Admin() {
     <div className="page">
       <section className="panel">
         <div className="bank-head">
-          <h1>Blood banks</h1>
+          <div>
+            <h1>Blood banks</h1>
+            <p className="muted">Signed in as {user.email}</p>
+          </div>
           <button className="btn" onClick={signOut}>Sign out</button>
         </div>
         <p className="muted">Only approved banks appear to the public. Verify new registrations before approving.</p>
